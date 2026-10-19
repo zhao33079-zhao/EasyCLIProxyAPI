@@ -153,7 +153,7 @@ jobs:
           key: ${{ matrix.runner }}
           workspaces: src-tauri -> target
           cache-workspace-crates: true
-          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+          save-if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
       - name: Restore bundled core archive
         id: core-cache
         uses: actions/cache/restore@v5
@@ -193,13 +193,13 @@ jobs:
           --download true
         shell: bash
       - name: Save Bun packages
-        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.bun-cache.outputs.cache-hit != 'true'
+        if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.bun-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: ~/.bun/install/cache
           key: ${{ steps.bun-cache.outputs.cache-primary-key }}
       - name: Save bundled core archive
-        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.core-cache.outputs.cache-hit != 'true'
+        if: ${{ !inputs.preview && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.core-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v5
         with:
           path: cpa-core

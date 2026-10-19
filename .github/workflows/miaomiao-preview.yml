@@ -1,0 +1,89 @@
+name: Miaomiao preview
+
+run-name: >-
+  Miaomiao preview ${{ github.event.pull_request.number && format('PR #{0}', github.event.pull_request.number) || github.sha }}
+
+on:
+  pull_request_target:
+    branches: [miaomiao]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  push:
+    branches: [miaomiao]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: miaomiao-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    name: Merge eligible PR and resolve preview commit
+    if: >-
+      github.repository == 'router-for-me/EasyCLIProxyAPI'
+      && (github.event_name == 'push'
+      || (github.event.pull_request.user.login == 'Roomen'
+      && !github.event.pull_request.draft))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      # Never check out or execute PR code in the merge job.
+      - name: Resolve source
+        id: source
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            if (context.eventName === 'push') {
+              if (context.ref === 'refs/heads/miaomiao' && !context.payload.deleted) {
+                core.setOutput('sha', context.sha);
+              }
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: context.payload.pull_request.number,
+            });
+            if (pr.user.login !== 'Roomen' || pr.base.ref !== 'miaomiao'
+                || pr.base.repo.full_name !== `${owner}/${repo}`
+                || pr.state !== 'open' || pr.draft) {
+              core.info('PR is no longer eligible for automatic merging.');
+              return;
+            }
+            if (pr.head.sha !== context.payload.pull_request.head.sha) {
+              core.info('PR changed since this event; the newer event will handle it.');
+              return;
+            }
+
+            // The expected SHA prevents merging a different revision after this check.
+            // GitHub enforces merge conflicts and branch protection; never bypass them.
+            const { data: result } = await github.rest.pulls.merge({
+              owner, repo, pull_number: pr.number,
+              sha: pr.head.sha, merge_method: 'merge',
+            });
+            if (!result.merged) {
+              throw new Error(`PR #${pr.number} was not merged: ${result.message}`);
+            }
+            core.setOutput('sha', result.sha);
+            await core.summary
+              .addRaw(`Merged PR #${pr.number} into miaomiao at ${result.sha}.`)
+              .write();
+
+  preview:
+    name: Build and publish merged preview
+    needs: source
+    if: needs.source.outputs.sha != ''
+    permissions:
+      contents: write
+    # GITHUB_TOKEN merges do not trigger push workflows. Calling the build here
+    # explicitly ensures every automatic merge gets a preview without a PAT.
+    uses: ./.github/workflows/release.yml
+    with:
+      preview: true
+      source_sha: ${{ needs.source.outputs.sha }}
+    secrets: inherit
